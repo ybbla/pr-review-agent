@@ -1,0 +1,67 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: evoagent
+      POSTGRES_USER: evoagent
+      POSTGRES_PASSWORD: evoagent-local
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U evoagent"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Web UI
+      - "4318:4318"     # OTLP HTTP（宿主机调试用）
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:16686/ || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  evoagent:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      EVOAGENT_HOST: 0.0.0.0
+      EVOAGENT_DATABASE_URL: postgresql://evoagent:evoagent-local@postgres:5432/evoagent
+      EVOAGENT_REDIS_URL: redis://redis:6379/0
+      EVOAGENT_OTEL_ENDPOINT: http://jaeger:4318/v1/traces
+      EVOAGENT_ASYNC_WORKERS: 4
+      EVOAGENT_SKILLS_DIR: /app/skills
+      EVOAGENT_AUTH_REQUIRED: "true"
+      EVOAGENT_AUTH_SECRET: ${EVOAGENT_AUTH_SECRET:-local-only-change-this-secret-123456}
+      EVOAGENT_BOOTSTRAP_ADMIN_USERNAME: ${EVOAGENT_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD: ${EVOAGENT_BOOTSTRAP_ADMIN_PASSWORD:-evoagent-local-admin}
+    env_file:
+      - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  redis_data:
